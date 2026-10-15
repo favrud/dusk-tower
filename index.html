@@ -650,15 +650,17 @@
       ctx.globalAlpha = 1;
     }
 
-    // 地面：用一块软边椭圆渐变，不要用多边形 —— 多边形会露出直边，
-    // 在等距投影下尤其像一块贴错位置的灰色板子。
+    // 地面：只做贴着塔基的一小块软边椭圆。
+    // 不要做成覆盖全屏的大渐变 —— 那样屏幕会落在椭圆内部，
+    // 看到的其实是渐变的等色线，屏幕上会浮出一条莫名其妙的弧。
     const base0 = uvToScreen(0, 0, 0);
-    const rad = 1750 * scale;
-    if (base0.y > -rad * 0.5 && base0.y < H + rad * 0.5){
+    const rad = 620 * scale;
+    if (base0.y > -rad && base0.y < H + rad * 0.6){
       const gg = ctx.createRadialGradient(base0.x, base0.y, 0, base0.x, base0.y, rad);
-      gg.addColorStop(0,    "hsl(226 15% 14%)");
-      gg.addColorStop(0.42, "hsl(226 14% 12.5%)");
-      gg.addColorStop(0.72, "hsl(226 13% 11.5%)");
+      gg.addColorStop(0,    "hsl(226 16% 15%)");
+      gg.addColorStop(0.30, "hsl(226 15% 13.4%)");
+      gg.addColorStop(0.55, "hsl(226 14% 12.2%)");
+      gg.addColorStop(0.78, "hsl(226 13% 11.4%)");
       gg.addColorStop(1,    "hsl(226 13% 11% / 0)");
       ctx.fillStyle = gg;
       ctx.beginPath(); ctx.ellipse(base0.x, base0.y, rad, rad * 0.5, 0, 0, 6.2832); ctx.fill();
