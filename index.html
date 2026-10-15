@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>叠 · 暮色塔</title>
+<style>
+  /* ── 视觉系统 ────────────────────────────────
+     底色   #0e1116（近黑偏蓝）
+     塔     色相沿高度连续旋转；顶面 +7 / 右侧面 −7 / 左侧面 −15 亮度
+     场景   一律比塔更暗、更灰（HSL 明度 ≤ 30%），保证塔永远是最亮的东西
+     字     系统字体栈；数字 tabular-nums 防跳动
+     间距   8 的倍数
+     ─────────────────────────────────────────── */
+  :root{
+    --ink:#0e1116;
+    --paper:#f2f4f8;
+    --muted:rgba(242,244,248,.42);
+    --faint:rgba(242,244,248,.16);
+    --gold:#ffd479;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; overflow:hidden; overscroll-behavior:none; }
+  body{
+    background:var(--ink);
+    color:var(--paper);
+    font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    font-variant-numeric:tabular-nums;
+    -webkit-user-select:none; user-select:none;
+    -webkit-tap-highlight-color:transparent;
+    -webkit-touch-callout:none;
+    touch-action:manipulation;
+  }
+  /* 用 fixed + inset 铺满可视区：手机上地址栏收放会不断改变 100% 高度，
+     用 fixed 定位可以避免画面在游戏中途被裁掉或抖动。
+     touch-action:none 同时干掉双击缩放与滑动滚屏。 */
+  canvas{ position:fixed; inset:0; display:block; width:100%; height:100%; touch-action:none; }
+
+  /* ── HUD ───────────────────────────────────── */
+  .hud{ position:fixed; inset:0; pointer-events:none; padding:26px 30px; }
+  .hud-top{ display:flex; justify-content:space-between; align-items:flex-start; }
+
+  .score{ font-size:64px; font-weight:200; line-height:.95; letter-spacing:-2px; }
+  .score.pop{ animation:pop .22s ease-out; }
+  @keyframes pop{ from{ transform:translateY(-8px) scale(1.14); opacity:.5 } to{ transform:none; opacity:1 } }
+
+  .alt{ margin-top:8px; font-size:11px; letter-spacing:2px; color:var(--muted); }
+  .alt b{ font-weight:500; color:rgba(242,244,248,.78); }
+
+  .hud-right{ display:flex; align-items:flex-start; gap:20px; }
+  .best{ text-align:right; font-size:11px; letter-spacing:2.4px; color:var(--muted); }
+  .best b{ display:block; font-size:22px; font-weight:400; letter-spacing:0; color:var(--paper); margin-top:3px; }
+
+  .icobtn{
+    pointer-events:auto; width:40px; height:40px;
+    display:grid; place-items:center;
+    border:1px solid var(--faint); background:rgba(255,255,255,.03);
+    color:var(--muted); font-family:inherit; font-size:13px; letter-spacing:1px;
+    cursor:pointer; transition:border-color .15s, color .15s, background .15s;
+  }
+  .icobtn:hover{ border-color:var(--paper); color:var(--paper); background:rgba(255,255,255,.08); }
+
+  /* 连击指示：只在 ≥2 连时出现 */
+  .combo{
+    position:fixed; left:50%; top:24%; transform:translateX(-50%);
+    font-size:12px; letter-spacing:5px; font-weight:600; color:var(--gold);
+    opacity:0; pointer-events:none;
+  }
+  .combo.show{ animation:popfade .7s ease-out; }
+  @keyframes popfade{ 0%{opacity:1; transform:translateX(-50%) scale(.94)} 100%{opacity:0; transform:translateX(-50%) scale(1.08)} }
+
+  /* ── 覆盖层 ────────────────────────────────── */
+  .veil{
+    position:fixed; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:22px; text-align:center;
+    background:radial-gradient(ellipse at 50% 44%, rgba(14,17,22,.62), rgba(14,17,22,.93) 70%);
+    backdrop-filter:blur(5px);
+    padding:32px; z-index:10;
+  }
+  .veil[hidden]{ display:none; }
+
+  .title{ font-size:80px; font-weight:200; letter-spacing:-3px; line-height:1; }
+  .title small{ display:block; font-size:11px; font-weight:400; letter-spacing:6px; color:var(--muted); margin-top:14px; }
+  .lede{ font-size:14px; color:var(--muted); line-height:1.85; max-width:34em; }
+
+  kbd{
+    display:inline-block; border:1px solid var(--faint); border-bottom-width:2px;
+    border-radius:5px; padding:2px 7px; font-size:12px; font-family:inherit;
+    color:var(--paper); background:rgba(255,255,255,.04);
+  }
+
+  .btn{
+    pointer-events:auto;
+    border:1px solid var(--paper); background:transparent; color:var(--paper);
+    font-family:inherit; font-size:15px; letter-spacing:1px;
+    padding:13px 34px; cursor:pointer;
+    transition:background .14s, color .14s, transform .1s;
+  }
+  .btn:hover{ background:var(--paper); color:var(--ink); }
+  .btn:active{ transform:translateY(1px); }
+  .btn.ghost{ border-color:var(--faint); color:var(--muted); font-size:13.5px; padding:10px 24px; }
+  .btn.ghost:hover{ background:transparent; border-color:var(--paper); color:var(--paper); }
+
+  .final{ display:flex; gap:44px; align-items:baseline; }
+  .final div{ text-align:center; }
+  .final b{ display:block; font-size:52px; font-weight:200; letter-spacing:-1.5px; }
+  .final span{ font-size:11px; letter-spacing:2.5px; color:var(--muted); }
+  .final .hi b{ color:var(--gold); }
+
+  .verdict{
+    font-size:16.5px; line-height:1.75; max-width:24em;
+    color:rgba(242,244,248,.88);
+  }
+  .row{ display:flex; gap:12px; }
+
+  .hint{
+    position:fixed; left:50%; bottom:26px; transform:translateX(-50%);
+    font-size:11.5px; letter-spacing:2px; color:var(--faint);
+    transition:opacity .6s ease; pointer-events:none; z-index:5;
+  }
+  .hint[hidden]{ display:block; opacity:0; }
+
+  @media (max-width:560px){
+    .hud{ padding:18px 20px; }
+    .score{ font-size:46px; }
+    .title{ font-size:56px; }
+    .final b{ font-size:38px; }
+    .verdict{ font-size:15px; }
+    .icobtn{ width:36px; height:36px; }
+  }
+  @media (prefers-reduced-motion:reduce){
+    .score.pop,.combo.show{ animation:none; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div class="hud">
+  <div class="hud-top">
+    <div>
+      <div class="score" id="score">0</div>
+      <div class="alt">高度 <b id="alt">0</b> m</div>
+    </div>
+    <div class="hud-right">
+      <button class="icobtn" id="pauseBtn" aria-label="暂停">❚❚</button>
+      <div class="best">BEST<b id="best">0</b></div>
+    </div>
+  </div>
+</div>
+
+<div class="combo" id="combo"></div>
+
+<!-- 开始 -->
+<div class="veil" id="start">
+  <div class="title">叠<small>DUSK&nbsp;TOWER</small></div>
+  <p class="lede">方块来回滑动，在它对齐时落下。<br>歪出来的那一截会被切掉——切得越准，塔越细越高。</p>
+  <button class="btn" id="startBtn">开始</button>
+  <p class="lede" style="font-size:12.5px" id="startKeys">
+    <kbd>空格</kbd> / <kbd>点击</kbd> 落下 &nbsp;·&nbsp; <kbd>P</kbd> 暂停
+  </p>
+</div>
+
+<!-- 暂停 -->
+<div class="veil" id="pause" hidden>
+  <div class="title" style="font-size:26px;letter-spacing:6px;font-weight:400">暂停</div>
+  <p class="lede" id="pauseInfo">当前 0 层</p>
+  <div class="row">
+    <button class="btn" id="resumeBtn">继续</button>
+    <button class="btn ghost" id="pauseRestartBtn">重新开始</button>
+  </div>
+  <p class="lede" style="font-size:12.5px" id="pauseKeys"><kbd>P</kbd> 或 <kbd>Esc</kbd> 继续</p>
+</div>
+
+<!-- 结算 -->
+<div class="veil" id="over" hidden>
+  <div class="title" style="font-size:26px;letter-spacing:3px;font-weight:400">塔塌了</div>
+  <div class="final">
+    <div><b id="finalScore">0</b><span>本次</span></div>
+    <div class="hi"><b id="finalBest">0</b><span>最佳</span></div>
+  </div>
+  <p class="verdict" id="verdict"></p>
+  <div class="row">
+    <button class="btn" id="againBtn">再来一次</button>
+  </div>
+</div>
+
+<p class="hint" id="hint" hidden>空格 / 点击 落下 &nbsp;·&nbsp; P 暂停</p>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ══ 常量 ═══════════════════════════════════
+     世界坐标：x 向右后、z 向左后、y 向上
+     等距投影：sx = (x−z)·cos30, sy = (x+z)·sin30 − y
+     场景物件直接用 (u, v) 定位：u = x−z（横向），v = x+z（纵向 = 远近）
+     ══════════════════════════════════════════ */
+  const ISO_X = Math.sqrt(3) / 2, ISO_Y = 0.5;
+
+  const SIZE = 260, TALL = 62;      // 方块边长 / 厚度
+  const RANGE = 300;                // 滑动幅度（单侧）
+  const PERFECT = 6;                // 「完美」判定阈值
+  const SPEED0 = 230, SPEED_MAX = 620;
+  const M_PER_LAYER = 3;            // 一层 ≈ 3 米
+
+  const cv = document.getElementById("cv");
+  const ctx = cv.getContext("2d");
+  const $ = (id) => document.getElementById(id);
+  const elScore = $("score"), elAlt = $("alt"), elBest = $("best");
+  const elCombo = $("combo"), elVerdict = $("verdict");
+  const elStart = $("start"), elPause = $("pause"), elOver = $("over");
+  const elHint = $("hint"), elPauseInfo = $("pauseInfo");
+  const elFinalScore = $("finalScore"), elFinalBest = $("finalBest");
+
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ══ 状态 ═══════════════════════════════════ */
+  let W = 0, H = 0, DPR = 1, scale = 1;
+
+  const S = {
+    blocks: [], moving: null, debris: [], props: [], stars: [],
+    axis: "x", score: 0, combo: 0,
+    best: +(localStorage.getItem("dusktower.best") || 0),
+    phase: "ready",                 // ready | playing | paused | over
+    camY: 0, camX: 0,
+    focus: { u: 0, v: 0, y: 0 },   // 相机锚定的世界点（当前顶层方块中心）
+    shake: 0, t: 0, hue: 202, seed: 1337,
+  };
+  const altitude = () => S.blocks.length * TALL;
+
+  /* ══ 颜色 ═══════════════════════════════════ */
+  const hueOf = (i) => (S.hue + i * 3.4 + 360) % 360;
+  const face = (h, dl) => `hsl(${h.toFixed(1)} 58% ${(56 + dl).toFixed(1)}%)`;
+
+  /* ══ 尺寸 ═══════════════════════════════════ */
+  function resize(){
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    scale = Math.max(0.22, Math.min(W, H * 1.15) / 1050);
+  }
+  addEventListener("resize", resize);
+
+  /* ══ 投影 ═══════════════════════════════════ */
+  const toScreen = (x, z, y) => ({
+    x: (x - z) * ISO_X * scale + W / 2 + S.camX,
+    y: ((x + z) * ISO_Y - y) * scale + S.camY,
+  });
+  const uvToScreen = (u, v, y) => ({
+    x: u * ISO_X * scale + W / 2 + S.camX,
+    y: (v * ISO_Y - y) * scale + S.camY,
+  });
+
+  /* ══ 通用绘制 ═══════════════════════════════ */
+  function poly(pts, fill){
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+  }
+  function tri(ax, ay, bx, by, cx2, cy2, fill){ poly([{x:ax,y:ay},{x:bx,y:by},{x:cx2,y:cy2}], fill); }
+
+  /* 屏幕空间的等距小盒子（底面朝前角在 sx, sy） */
+  function isoBox(sx, sy, hw, h, cTop, cL, cR){
+    const hh = hw * 0.5;
+    const F = { x: sx,      y: sy };
+    const L = { x: sx - hw, y: sy - hh };
+    const R = { x: sx + hw, y: sy - hh };
+    const T = { x: sx,      y: sy - hh * 2 };
+    poly([L, F, { x: F.x, y: F.y - h }, { x: L.x, y: L.y - h }], cL);
+    poly([F, R, { x: R.x, y: R.y - h }, { x: F.x, y: F.y - h }], cR);
+    poly([T, R, F, L], cTop);
+  }
+
+  /* ══ 塔 ═════════════════════════════════════ */
+  function drawBlock(b, alpha = 1){
+    const { x, z, w, d, y } = b;
+    const h = hueOf(b.i);
+    if (alpha !== 1) ctx.globalAlpha = alpha;
+    const A = toScreen(x, z, y), B = toScreen(x + w, z, y);
+    const C = toScreen(x + w, z + d, y), D = toScreen(x, z + d, y);
+    const Cb = toScreen(x + w, z + d, y - TALL);
+    poly([D, C, Cb, toScreen(x, z + d, y - TALL)], face(h, -15));
+    poly([B, C, Cb, toScreen(x + w, z, y - TALL)], face(h, -7));
+    poly([A, B, C, D], face(h, +7));
+    ctx.globalAlpha = 1;
+  }
+
+  /* ══ 场景物件 ═══════════════════════════════
+     全部比塔暗（明度 ≤ 30%），保证塔是画面最亮的
+     ══════════════════════════════════════════ */
+  function mulberry32(a){
+    return function(){
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  function buildScene(){
+    S.props = [];
+    // ── 地面层：固定种子，保证「家」这一屏构图稳定
+    const r = mulberry32(20261015);
+    const GROUND = ["tree","tree","house","tree","fence","house","lamp","tree"];
+    for (let i = 0; i < 30; i++){
+      const side = i % 2 ? 1 : -1;
+      S.props.push({
+        kind: GROUND[Math.floor(r() * GROUND.length)],
+        u: side * (330 + r() * 1650),
+        v: 60 + r() * 1100,
+        y: 0, s: 0.62 + r() * 0.85, ph: r() * 6.28, sp: 0, layer: 0,
+      });
+    }
+    // ── 天空层：每次开局随机，保证不重样
+    const r2 = mulberry32((Math.random() * 1e9) | 0);
+    for (let i = 0; i < 84; i++){
+      const roll = r2();
+      let kind, y;
+      if (roll < 0.38){ kind = "cloud";   y = 640 + r2() * 4000; }
+      else if (roll < 0.66){ kind = "bird";    y = 380 + r2() * 1900; }
+      else if (roll < 0.83){ kind = "balloon"; y = 950 + r2() * 2500; }
+      else { kind = "plane";   y = 1400 + r2() * 2500; }
+      S.props.push({
+        kind, u: (r2() * 2 - 1) * 1500, v: (r2() * 2 - 1) * 460,
+        y, s: 0.5 + r2() * 0.95, ph: r2() * 6.28,
+        sp: 0.25 + r2() * 0.9, layer: 1,
+      });
+    }
+    S.props.push({ kind: "plane", u: -1650, v: 0, y: 900, s: 1.15, ph: 1.1, sp: 0.85, layer: 1 });
+    buildStars();
+  }
+
+  /* 星空放在屏幕空间：恒星不该跟着塔一起往上跑，它们是「固定在天上」的。
+     只有地面/云/鸟/飞机/气球用世界坐标 —— 那些才是「被你甩在下面」的东西。 */
+  function buildStars(){
+    const r = mulberry32((Math.random() * 1e9) | 0);
+    S.stars = [];
+    for (let i = 0; i < 170; i++){
+      S.stars.push({ nx: r(), ny: r() * 0.86, s: 0.55 + r() * 1.5, ph: r() * 6.283, tw: 0.5 + r() * 1.7 });
+    }
+  }
+
+  function drawProp(p, alt, t){
+    const k = scale * p.s;
+    const o = uvToScreen(p.u, p.v, p.y);
+
+    // 地面物件先落一片接触阴影，否则会像浮在空中
+    if (p.layer === 0){
+      ctx.fillStyle = "rgba(0,0,0,.42)";
+      ctx.beginPath(); ctx.ellipse(o.x, o.y + 2 * k, 34 * k, 13 * k, 0, 0, 6.2832); ctx.fill();
+    }
+
+    switch (p.kind){
+      case "tree": {
+        const Ht = 122 * k;
+        ctx.fillStyle = "hsl(24 14% 16%)";
+        ctx.fillRect(o.x - 3.5 * k, o.y - Ht * 0.34, 7 * k, Ht * 0.34);
+        tri(o.x, o.y - Ht, o.x - 31 * k, o.y - Ht * 0.28, o.x + 31 * k, o.y - Ht * 0.28, "hsl(158 17% 17%)");
+        tri(o.x, o.y - Ht * 1.16, o.x - 23 * k, o.y - Ht * 0.60, o.x + 23 * k, o.y - Ht * 0.60, "hsl(158 19% 21%)");
+        break;
+      }
+      case "house": {
+        isoBox(o.x, o.y, 52 * k, 62 * k, "hsl(30 16% 26%)", "hsl(30 14% 15%)", "hsl(30 15% 20%)");
+        const ty = o.y - 62 * k;
+        isoBox(o.x, ty, 60 * k, 30 * k, "hsl(12 22% 22%)", "hsl(12 20% 13%)", "hsl(12 21% 17%)");
+        // 窗（有人住）
+        ctx.fillStyle = "rgba(255,212,121,.5)";
+        ctx.fillRect(o.x - 20 * k, o.y - 46 * k, 9 * k, 9 * k);
+        break;
+      }
+      case "fence": {
+        ctx.strokeStyle = "hsl(28 12% 20%)"; ctx.lineWidth = Math.max(1, 3 * k);
+        ctx.beginPath();
+        ctx.moveTo(o.x - 34 * k, o.y - 20 * k); ctx.lineTo(o.x + 34 * k, o.y - 20 * k);
+        ctx.moveTo(o.x - 34 * k, o.y - 32 * k); ctx.lineTo(o.x + 34 * k, o.y - 32 * k);
+        ctx.stroke();
+        ctx.fillStyle = "hsl(28 12% 20%)";
+        for (let i = -1; i <= 1; i++) ctx.fillRect(o.x + i * 30 * k - 2.5 * k, o.y - 44 * k, 5 * k, 44 * k);
+        break;
+      }
+      case "lamp": {
+        ctx.fillStyle = "hsl(220 8% 18%)";
+        ctx.fillRect(o.x - 2.5 * k, o.y - 96 * k, 5 * k, 96 * k);
+        const glow = 0.55 + 0.45 * Math.sin(t * 1.6 + p.ph);
+        const rg = ctx.createRadialGradient(o.x, o.y - 100 * k, 0, o.x, o.y - 100 * k, 40 * k);
+        rg.addColorStop(0, `rgba(255,212,121,${0.34 * glow})`);
+        rg.addColorStop(1, "rgba(255,212,121,0)");
+        ctx.fillStyle = rg;
+        ctx.beginPath(); ctx.arc(o.x, o.y - 100 * k, 40 * k, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = `rgba(255,224,160,${0.7 * glow})`;
+        ctx.beginPath(); ctx.arc(o.x, o.y - 100 * k, 4.5 * k, 0, 6.2832); ctx.fill();
+        break;
+      }
+      case "cloud": {
+        ctx.fillStyle = "hsl(226 14% 27% / .19)";
+        const s = 36 * k;
+        for (const [dx, dy, rr] of [[-2.0,0.08,1],[0,-0.42,1.3],[2.1,0.12,1.0],[-0.6,-0.02,1.05]]){
+          ctx.beginPath(); ctx.ellipse(o.x + dx * s, o.y + dy * s, rr * s, rr * s * 0.42, 0, 0, 6.2832); ctx.fill();
+        }
+        break;
+      }
+      case "bird": {
+        const w = 15 * k, fl = Math.sin(t * 7 + p.ph) * 0.5 + 0.5;
+        ctx.strokeStyle = "hsl(226 10% 30%)";
+        ctx.lineWidth = Math.max(1, 2.2 * k);
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(o.x - w, o.y + fl * w * 0.9);
+        ctx.quadraticCurveTo(o.x - w * 0.5, o.y - fl * w * 1.5, o.x, o.y);
+        ctx.quadraticCurveTo(o.x + w * 0.5, o.y - fl * w * 1.5, o.x + w, o.y + fl * w * 0.9);
+        ctx.stroke();
+        break;
+      }
+      case "balloon": {
+        const bob = Math.sin(t * 0.9 + p.ph) * 7 * k;
+        const cy = o.y - 52 * k + bob;
+        ctx.fillStyle = "hsl(28 30% 32%)";
+        ctx.beginPath(); ctx.ellipse(o.x, cy, 21 * k, 24 * k, 0, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = "hsl(28 34% 40%)";
+        ctx.beginPath(); ctx.ellipse(o.x - 6 * k, cy - 5 * k, 8 * k, 10 * k, 0, 0, 6.2832); ctx.fill();
+        ctx.strokeStyle = "hsl(28 12% 24%)"; ctx.lineWidth = Math.max(1, 1.4 * k);
+        ctx.beginPath();
+        ctx.moveTo(o.x - 8 * k, cy + 22 * k); ctx.lineTo(o.x - 4 * k, cy + 36 * k);
+        ctx.moveTo(o.x + 8 * k, cy + 22 * k); ctx.lineTo(o.x + 4 * k, cy + 36 * k);
+        ctx.stroke();
+        ctx.fillStyle = "hsl(28 18% 26%)";
+        ctx.fillRect(o.x - 6 * k, cy + 36 * k, 12 * k, 9 * k);
+        break;
+      }
+      case "star":
+      case "moon":
+        break;   // 星空与月亮已改到屏幕空间绘制，见 render()
+
+      case "plane": {
+        const s = 48 * k;
+        ctx.fillStyle = "hsl(226 9% 30%)";
+        ctx.beginPath(); ctx.ellipse(o.x, o.y, s, s * 0.26, 0, 0, 6.2832); ctx.fill();
+        tri(o.x - s * 0.1, o.y, o.x - s * 1.5, o.y + s * 0.5, o.x + s * 0.15, o.y + s * 0.18, "hsl(226 9% 26%)");
+        tri(o.x - 2 * k, o.y - 2 * k, o.x - 16 * k, o.y - 22 * k, o.x + 8 * k, o.y - 4 * k, "hsl(226 9% 27%)");
+        // 航行灯
+        if (Math.sin(t * 3.4 + p.ph) > 0.55){
+          ctx.fillStyle = "rgba(255,120,120,.9)";
+          ctx.beginPath(); ctx.arc(o.x - s, o.y + 1 * k, 2.6 * k, 0, 6.2832); ctx.fill();
+        }
+        break;
+      }
+    }
+  }
+
+  function stepProps(dt, alt, t){
+    if (reduce) return;
+    for (const p of S.props){
+      if (!p.sp) continue;
+      if (p.kind === "cloud")   p.u += p.sp * 11 * dt;
+      else if (p.kind === "bird")    p.u += p.sp * 62 * dt;
+      else if (p.kind === "plane")   p.u += p.sp * 215 * dt;
+      else if (p.kind === "balloon") p.u += p.sp * 13 * dt;
+      if (p.u > 1700) p.u -= 3400;
+      if (p.u < -1700) p.u += 3400;
+    }
+  }
+
+  /* ══ 关卡 ═══════════════════════════════════ */
+  const baseBlock = () => S.blocks.length ? S.blocks[S.blocks.length - 1] : null;
+
+  function spawnMoving(){
+    const base = baseBlock();
+    const b = { x: base.x, z: base.z, w: base.w, d: base.d, y: base.y + TALL, i: S.blocks.length };
+    b.dir = 1; b.off = -RANGE;
+    if (S.axis === "x") b.x = base.x + b.off; else b.z = base.z + b.off;
+    b.speed = Math.min(SPEED0 + S.blocks.length * 17, SPEED_MAX);
+    S.moving = b;
+  }
+
+  function showCombo(n){
+    elCombo.textContent = n > 1 ? `PERFECT ×${n}` : "PERFECT";
+    elCombo.classList.remove("show"); void elCombo.offsetWidth; elCombo.classList.add("show");
+  }
+
+  function drop(){
+    if (S.phase !== "playing" || !S.moving) return;
+    const m = S.moving, base = baseBlock(), ax = S.axis;
+
+    // 由 off 反推当前位置，而不是读上一帧写进 m.x/m.z 的值 ——
+    // 否则判定用的位置会滞后一帧（真机上偶尔少切/多切一截）
+    if (ax === "x") m.x = base.x + m.off; else m.z = base.z + m.off;
+
+    const a0 = (ax === "x" ? base.x : base.z), al = (ax === "x" ? base.w : base.d);
+    const b0 = (ax === "x" ? m.x    : m.z),    bl = (ax === "x" ? m.w    : m.d);
+    const lo = Math.max(a0, b0), hi = Math.min(a0 + al, b0 + bl);
+    const overlap = hi - lo;
+
+    if (overlap <= 0){ gameOver(); return; }
+
+    if (Math.abs(b0 - a0) <= PERFECT){
+      if (ax === "x"){ m.x = base.x; m.w = base.w; } else { m.z = base.z; m.d = base.d; }
+      S.combo++; showCombo(S.combo);
+    } else {
+      const cut = (b0 < a0) ? { from: b0, to: a0 } : { from: hi, to: b0 + bl };
+      if (cut.to - cut.from > 0.5){
+        S.debris.push({
+          x: ax === "x" ? cut.from : m.x, z: ax === "x" ? m.z : cut.from,
+          w: ax === "x" ? (cut.to - cut.from) : m.w,
+          d: ax === "x" ? m.d : (cut.to - cut.from),
+          y: m.y, i: m.i, vy: 0, a: 1,
+        });
+      }
+      if (ax === "x"){ m.x = lo; m.w = overlap; } else { m.z = lo; m.d = overlap; }
+      S.combo = 0;
+    }
+
+    delete m.dir; delete m.off; delete m.speed;
+    S.blocks.push(m);
+    S.moving = null;
+
+    // 把相机锚点挪到新顶层。只记「世界坐标里的锚点」，像素偏移每帧现算 ——
+    // 这样手机上地址栏收放导致的 resize 不会让塔跳位。
+    const cx = m.x + m.w / 2, cz = m.z + m.d / 2;
+    S.focus = { u: cx - cz, v: cx + cz, y: m.y };
+
+    S.score++;
+    elScore.textContent = S.score;
+    elScore.classList.remove("pop"); void elScore.offsetWidth; elScore.classList.add("pop");
+    elAlt.textContent = S.score * M_PER_LAYER;
+    if (S.score === 1) elHint.hidden = true;
+
+    S.axis = (ax === "x") ? "z" : "x";
+    spawnMoving();
+  }
+
+  /* ══ 结算语（按分数分档） ═══════════════════ */
+  const VERDICTS = [
+    { min: 0,  max: 2,  lines: ["第一层就没了。至少你来了。", "塔这种东西，本来也不是一天建成的。", "你放下一块，然后放下了另一块。很公平。"] },
+    { min: 3,  max: 9,  lines: ["勉强算个塔。三个字，「算个塔」。", "比平地高一点。这是事实，不是夸奖。", "你开始找到节奏了。开始，而已。", "还行。地上多了一小摞东西。"] },
+    { min: 10, max: 19, lines: ["有模有样了，再练练就是别人的水平。", "这个高度，够看见邻居家屋顶了。", "有点意思。别得意。", "你已经开始在意对齐了。这很危险。"] },
+    { min: 20, max: 34, lines: ["不错。你有点手艺人的样子了。", "这个高度已经能看见航线了。", "你已经超越大多数随手点进来的人。", "很好。但你刚才那一下明显慌了。"] },
+    { min: 35, max: 49, lines: ["有点过于熟练了。是不是偷偷练过？", "高到可以申报了。", "到这个份上，输赢已经不重要——但你还是很在意。"] },
+    { min: 50, max: Infinity, lines: ["这不是塔，这是行为艺术。", "你在跟谁较劲？", "云端之上没有评判，只有你和你那点执念。", "够了。真的够了。"] },
+  ];
+  function pickVerdict(score){
+    const tier = VERDICTS.find(v => score >= v.min && score <= v.max) || VERDICTS[0];
+    return tier.lines[Math.floor(Math.random() * tier.lines.length)];
+  }
+
+  function gameOver(){
+    S.phase = "over";
+    S.moving = null;
+    S.shake = reduce ? 0 : 14;
+    if (S.score > S.best){ S.best = S.score; localStorage.setItem("dusktower.best", String(S.best)); }
+    elBest.textContent = S.best;
+    setTimeout(() => {
+      elFinalScore.textContent = S.score;
+      elFinalBest.textContent = S.best;
+      elVerdict.textContent = pickVerdict(S.score);
+      elOver.hidden = false;
+    }, reduce ? 0 : 520);
+  }
+
+  /* ══ 暂停 ═══════════════════════════════════ */
+  function setPaused(on){
+    if (on){
+      if (S.phase !== "playing") return;
+      S.phase = "paused";
+      $("pauseBtn").textContent = "▶";
+      elPauseInfo.textContent = `当前 ${S.score} 层 · 高度 ${S.score * M_PER_LAYER} m`;
+      elPause.hidden = false;
+    } else {
+      if (S.phase !== "paused") return;
+      S.phase = "playing";
+      $("pauseBtn").textContent = "❚❚";
+      elPause.hidden = true;
+      last = performance.now();
+    }
+  }
+
+  /* ══ 主循环 ═════════════════════════════════ */
+  let last = performance.now();
+  function frame(now){
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    S.t += dt;
+    const alt = altitude();
+
+    if (S.phase === "playing" && S.moving){
+      const m = S.moving;
+      m.off += m.dir * m.speed * dt;
+      if (m.off > RANGE){ m.off = RANGE; m.dir = -1; }
+      if (m.off < -RANGE){ m.off = -RANGE; m.dir = 1; }
+      const base = baseBlock();
+      if (S.axis === "x") m.x = base.x + m.off; else m.z = base.z + m.off;
+    }
+
+    // 相机目标每帧由「锚点 + 当前 scale」推导，不做像素累加
+    const f = S.focus;
+    const ty = H * 0.48 - (f.v * ISO_Y - f.y) * scale;
+    const tx = -f.u * ISO_X * scale;
+    const k = 1 - Math.pow(0.0016, dt);
+    S.camY += (ty - S.camY) * k;
+    S.camX += (tx - S.camX) * k;
+    if (S.shake > 0.2) S.shake *= Math.pow(0.02, dt); else S.shake = 0;
+
+    for (let i = S.debris.length - 1; i >= 0; i--){
+      const f = S.debris[i];
+      f.vy -= 1500 * dt; f.y += f.vy * dt; f.a -= dt * 0.9;
+      if (f.a <= 0) S.debris.splice(i, 1);
+    }
+
+    stepProps(dt, alt, S.t);
+    render(alt);
+    requestAnimationFrame(frame);
+  }
+
+  function render(alt){
+    const topHue = hueOf(S.blocks.length + 2);
+    // 越高天越暗、越偏紫
+    const darkness = Math.min(0.55, alt / 6000 * 0.55);
+    const g = ctx.createRadialGradient(W * .5, H * .44, 0, W * .5, H * .44, Math.max(W, H) * .8);
+    g.addColorStop(0, `hsl(${topHue.toFixed(0)} ${(34 - darkness * 22).toFixed(0)}% ${(11 - darkness * 6).toFixed(1)}%)`);
+    g.addColorStop(1, "#0e1116");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    if (S.shake > 0.2) ctx.translate((Math.random() - .5) * S.shake, (Math.random() - .5) * S.shake);
+
+    // 星空 + 月亮：屏幕空间，越高越亮
+    const skyA = Math.max(0, Math.min(1, (alt - 1100) / 2400));
+    if (skyA > 0){
+      for (const st of S.stars){
+        const tw = 0.5 + 0.5 * Math.sin(S.t * st.tw + st.ph);
+        ctx.fillStyle = `rgba(242,244,248,${(skyA * (0.18 + 0.6 * tw)).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(st.nx * W, st.ny * H, st.s * Math.max(0.9, scale), 0, 6.2832);
+        ctx.fill();
+      }
+      // 放在左下空白区，避开左上角的分数与右上角的按钮
+      const mx = W * 0.19, my = H * 0.34;
+      ctx.globalAlpha = skyA;
+      const mg = ctx.createRadialGradient(mx, my, 0, mx, my, 190);
+      mg.addColorStop(0, "rgba(242,244,248,.20)");
+      mg.addColorStop(.42, "rgba(242,244,248,.11)");
+      mg.addColorStop(1, "rgba(242,244,248,0)");
+      ctx.fillStyle = mg;
+      ctx.beginPath(); ctx.arc(mx, my, 190, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = "rgba(242,244,248,.24)";
+      ctx.beginPath(); ctx.arc(mx, my, 42, 0, 6.2832); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // 地面：用一块软边椭圆渐变，不要用多边形 —— 多边形会露出直边，
+    // 在等距投影下尤其像一块贴错位置的灰色板子。
+    const base0 = uvToScreen(0, 0, 0);
+    const rad = 1750 * scale;
+    if (base0.y > -rad * 0.5 && base0.y < H + rad * 0.5){
+      const gg = ctx.createRadialGradient(base0.x, base0.y, 0, base0.x, base0.y, rad);
+      gg.addColorStop(0,    "hsl(226 15% 14%)");
+      gg.addColorStop(0.42, "hsl(226 14% 12.5%)");
+      gg.addColorStop(0.72, "hsl(226 13% 11.5%)");
+      gg.addColorStop(1,    "hsl(226 13% 11% / 0)");
+      ctx.fillStyle = gg;
+      ctx.beginPath(); ctx.ellipse(base0.x, base0.y, rad, rad * 0.5, 0, 0, 6.2832); ctx.fill();
+    }
+
+    // 背景物件（先画，永远在塔后面）
+    const pad = 240;
+    for (const p of S.props){
+      const o = uvToScreen(p.u, p.v, p.y);
+      if (o.x < -pad || o.x > W + pad || o.y < -pad || o.y > H + pad) continue;
+      drawProp(p, alt, S.t);
+    }
+
+    const vis = S.blocks.filter(b => {
+      const o = toScreen(b.x + b.w / 2, b.z + b.d / 2, b.y);
+      return o.y > -320 * scale && o.y < H + 460 * scale;
+    });
+    for (const b of vis) drawBlock(b);
+    for (const f of S.debris) drawBlock(f, Math.max(0, f.a));
+    if (S.moving) drawBlock(S.moving);
+
+    ctx.restore();
+
+    // 对齐参考虚线
+    if (S.phase === "playing" && S.moving){
+      const m = S.moving, base = baseBlock();
+      const c = toScreen(m.x + m.w / 2, m.z + m.d / 2, m.y);
+      const bc = toScreen(base.x + base.w / 2, base.z + base.d / 2, base.y);
+      const d = Math.abs(S.axis === "x" ? (m.x - base.x) : (m.z - base.z));
+      const ok = d <= PERFECT;
+      ctx.save();
+      ctx.globalAlpha = ok ? .85 : .26;
+      ctx.strokeStyle = ok ? "#ffd479" : "#f2f4f8";
+      ctx.lineWidth = 1; ctx.setLineDash([3, 6]);
+      ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(c.x, bc.y); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /* ══ 开局 / 重开 ════════════════════════════ */
+  function reset(){
+    S.blocks = [{ x: -SIZE / 2, z: -SIZE / 2, w: SIZE, d: SIZE, y: 0, i: 0 }];
+    S.debris = []; S.axis = "x"; S.score = 0; S.combo = 0; S.shake = 0;
+    S.focus = { u: 0, v: 0, y: 0 };
+    elScore.textContent = "0"; elAlt.textContent = "0"; elBest.textContent = S.best;
+    buildScene();
+    S.camY = H * 0.48;   // v=0, y=0 时相机目标就是 H*0.48，先摆正免得第一帧跳一下
+    S.camX = 0;
+    spawnMoving();
+  }
+
+  function start(){
+    resize();
+    reset();
+    S.phase = "playing";
+    elStart.hidden = true; elPause.hidden = true; elOver.hidden = true;
+    $("pauseBtn").textContent = "❚❚";
+    elHint.hidden = false;
+    last = performance.now();
+  }
+
+  /* ══ 输入 ═══════════════════════════════════ */
+  addEventListener("keydown", (e) => {
+    if (e.code === "Space" || e.code === "Enter" || e.code === "ArrowDown"){
+      e.preventDefault();
+      if (S.phase === "ready") start();
+      else if (S.phase === "paused") setPaused(false);
+      else drop();
+    } else if (e.code === "KeyP" || e.code === "Escape"){
+      e.preventDefault();
+      setPaused(S.phase === "playing");
+    }
+  }, { passive:false });
+
+  cv.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (S.phase === "ready") start(); else drop();
+  });
+
+  // 开局遮罩点任意处也能开始
+  elStart.addEventListener("pointerdown", (e) => { if (e.target === elStart) start(); });
+  $("startBtn").addEventListener("click", start);
+  $("againBtn").addEventListener("click", start);
+  $("pauseBtn").addEventListener("click", () => setPaused(S.phase === "playing"));
+  $("resumeBtn").addEventListener("click", () => setPaused(false));
+  $("pauseRestartBtn").addEventListener("click", start);
+
+  /* ══ 启动 ═══════════════════════════════════ */
+  // 触屏设备没有键盘：把按键提示换成触屏说法。
+  // 先用媒体查询猜一次，真机第一次触摸时再用 pointerType 确认
+  // —— 混合输入设备（触屏笔记本）的媒体查询经常不准。
+  let touchUI = false;
+  function applyTouchUI(on){
+    if (on === touchUI) return;
+    touchUI = on;
+    if (on){
+      $("startKeys").innerHTML = "轻触屏幕任意处即可落下";
+      $("pauseKeys").textContent = "点「继续」返回游戏";
+      elHint.textContent = "轻触屏幕落下";
+    } else {
+      $("startKeys").innerHTML = "<kbd>空格</kbd> / <kbd>点击</kbd> 落下 &nbsp;·&nbsp; <kbd>P</kbd> 暂停";
+      $("pauseKeys").innerHTML = "<kbd>P</kbd> 或 <kbd>Esc</kbd> 继续";
+      elHint.textContent = "空格 / 点击 落下 · P 暂停";
+    }
+  }
+  const tp = new URLSearchParams(location.search).get("touch");
+  applyTouchUI(tp === "1" ? true : tp === "0" ? false : matchMedia("(hover: none) and (pointer: coarse)").matches);
+  addEventListener("pointerdown", (e) => { if (e.pointerType === "touch") applyTouchUI(true); });
+
+  elBest.textContent = S.best;
+  resize();
+  reset();
+  S.phase = "ready";
+  requestAnimationFrame(frame);
+
+  window.__game = S;              // 给自动化验证留的钩子
+  window.__api = { start, drop, setPaused, reset };
+
+  /* ?demo=N —— 自动叠 N 层并把相机就位，供截图/演示用，不影响正常玩法 */
+  const demoN = parseInt(new URLSearchParams(location.search).get("demo") || "0", 10);
+  if (demoN > 0){
+    start();
+    for (let i = 0; i < demoN; i++){
+      if (S.moving) S.moving.off = (i % 3 === 0) ? 0 : ((i % 5) - 2) * 5;
+      drop();
+    }
+    const f = S.focus;
+    S.camY = H * 0.48 - (f.v * ISO_Y - f.y) * scale;
+    S.camX = -f.u * ISO_X * scale;
+  }
+})();
+</script>
+</body>
+</html>
